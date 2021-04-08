@@ -14,6 +14,7 @@
 */
 
 #include <Arduino_LSM9DS1.h>
+#include <ArduinoBLE.h>
 
 #include <TensorFlowLite.h>
 #include <tensorflow/lite/micro/all_ops_resolver.h>
@@ -24,11 +25,26 @@
 
 #include "model3.h"
 
+#define RED 22
+#define BLUE 24
+#define GREEN 23
+#define LED_PWR 25
+
+
+//BLUETOOTH
+BLEService trickService("180F");
+BLEUnsignedCharCharacteristic trickChar("2A19",  // standard 16-bit characteristic UUID
+                                        BLERead | BLENotify);
+
+
 const float accelerationThreshold = 4.5; // threshold of significant in G's
 const int numSamples = 119;
+boolean collectingData = false;
 
 int samplesRead = numSamples;
-
+int prevPred = 0;
+int trick = 0;
+float predictedValue = 0;
 // global variables used for TensorFlow Lite (Micro)
 tflite::MicroErrorReporter tflErrorReporter;
 
@@ -60,6 +76,9 @@ void setup() {
   Serial.begin(9600);
   while (!Serial);
 
+
+  //----------------------SENSOR SETUP----------------------//
+
   // initialize the IMU
   if (!IMU.begin()) {
     Serial.println("Failed to initialize IMU!");
@@ -75,6 +94,9 @@ void setup() {
   Serial.println(" Hz");
 
   Serial.println();
+
+
+  //----------------------TENSORFLOW SETUP----------------------//
 
   // get the TFL representation of the model byte array
   tflModel = tflite::GetModel(model);
@@ -92,13 +114,20 @@ void setup() {
   // Get pointers for the model's input and output tensors
   tflInputTensor = tflInterpreter->input(0);
   tflOutputTensor = tflInterpreter->output(0);
+
+
+  //----------------------BLUETOOTH SETUP----------------------//
+
+
+
+
 }
 
 void loop() {
   float aX, aY, aZ, gX, gY, gZ;
-
-  // wait for significant motion
   while (samplesRead == numSamples) {
+
+    // wait for significant motion
     if (IMU.accelerationAvailable()) {
       // read the acceleration data
       IMU.readAcceleration(aX, aY, aZ);
@@ -111,14 +140,85 @@ void loop() {
         // reset the sample read count
         samplesRead = 0;
         break;
+        //        getData();
       }
     }
   }
-
-  // check if the all the required samples have been read since
-  // the last time the significant motion was detected
   while (samplesRead < numSamples) {
-    // check if new acceleration AND gyroscope data is available
+    //check if new acceleration AND gyroscope data is available
+    if (IMU.accelerationAvailable() && IMU.gyroscopeAvailable()) {
+      //read the acceleration and gyroscope data
+      IMU.readAcceleration(aX, aY, aZ);
+      IMU.readGyroscope(gX, gY, gZ);
+
+      //ormalize the IMU data between 0 to 1 and store in the model's
+      //input tensor
+      tflInputTensor->data.f[samplesRead * 6 + 0] = (aX + 4.0) / 8.0;
+      tflInputTensor->data.f[samplesRead * 6 + 1] = (aY + 4.0) / 8.0;
+      tflInputTensor->data.f[samplesRead * 6 + 2] = (aZ + 4.0) / 8.0;
+      tflInputTensor->data.f[samplesRead * 6 + 3] = (gX + 2000.0) / 4000.0;
+      tflInputTensor->data.f[samplesRead * 6 + 4] = (gY + 2000.0) / 4000.0;
+      tflInputTensor->data.f[samplesRead * 6 + 5] = (gZ + 2000.0) / 4000.0;
+
+      samplesRead++;
+
+      if (samplesRead == numSamples) {
+        // Run inferencing
+        trick = 0;
+        TfLiteStatus invokeStatus = tflInterpreter->Invoke();
+        if (invokeStatus != kTfLiteOk) {
+          Serial.println("Invoke failed!");
+          while (1);
+          return;
+        }
+
+        // Loop through the output tensor values from the model
+        for (int i = 0; i < NUM_GESTURES; i++) {
+
+          predictedValue = tflOutputTensor->data.f[i];
+
+
+          if ( prevPred < predictedValue) {
+            prevPred = predictedValue;
+            trick = i;
+          }
+        }
+
+        Serial.println(trick);
+        Serial.println(prevPred);
+        Serial.println(predictedValue);
+        Serial.println();
+      }
+    }
+  }
+}
+
+
+void motionListener() {
+  float aX, aY, aZ, gX, gY, gZ;
+
+
+  // wait for significant motion
+  if (IMU.accelerationAvailable()) {
+    // read the acceleration data
+    IMU.readAcceleration(aX, aY, aZ);
+
+    // sum up the absolutes
+    float aSum = fabs(aX) + fabs(aY) + fabs(aZ);
+
+    // check if it's above the threshold
+    if (aSum >= accelerationThreshold) {
+      // reset the sample read count
+      samplesRead = 0;
+      getData();
+    }
+  }
+}
+
+void getData() {
+  float aX, aY, aZ, gX, gY, gZ;
+  samplesRead = 0;
+  while (samplesRead < numSamples) {
     if (IMU.accelerationAvailable() && IMU.gyroscopeAvailable()) {
       // read the acceleration and gyroscope data
       IMU.readAcceleration(aX, aY, aZ);
@@ -132,26 +232,97 @@ void loop() {
       tflInputTensor->data.f[samplesRead * 6 + 3] = (gX + 2000.0) / 4000.0;
       tflInputTensor->data.f[samplesRead * 6 + 4] = (gY + 2000.0) / 4000.0;
       tflInputTensor->data.f[samplesRead * 6 + 5] = (gZ + 2000.0) / 4000.0;
+    }
+    samplesRead++;
+  }
 
-      samplesRead++;
+  Serial.println("Collected Data Sample");
+  runModel();
 
-      if (samplesRead == numSamples) {
-        // Run inferencing
-        TfLiteStatus invokeStatus = tflInterpreter->Invoke();
-        if (invokeStatus != kTfLiteOk) {
-          Serial.println("Invoke failed!");
-          while (1);
-          return;
-        }
+}
 
-        // Loop through the output tensor values from the model
-        for (int i = 0; i < NUM_GESTURES; i++) {
-          Serial.print(GESTURES[i]);
-          Serial.print(": ");
-          Serial.println(tflOutputTensor->data.f[i], 6);
-        }
-        Serial.println();
-      }
+void runModel() {
+  if (samplesRead == numSamples) {
+    // Run inferencing
+    trick = 0;
+    TfLiteStatus invokeStatus = tflInterpreter->Invoke();
+    if (invokeStatus != kTfLiteOk) {
+      Serial.println("Invoke failed!");
+      while (1);
+      return;
     }
   }
+
+  getPredictions();
+
 }
+
+void getPredictions() {
+  for (int i = 0; i < NUM_GESTURES; i++) {
+
+    predictedValue = tflOutputTensor->data.f[i];
+
+
+    if ( prevPred < predictedValue) {
+      prevPred = predictedValue;
+      trick = i;
+    }
+  }
+
+  Serial.println(trick);
+  Serial.println(prevPred);
+  Serial.println(predictedValue);
+  Serial.println();
+}
+
+
+//  // check if the all the required samples have been read since
+//  // the last time the significant motion was detected
+//    while (samplesRead < numSamples) {
+//      // check if new acceleration AND gyroscope data is available
+//      if (IMU.accelerationAvailable() && IMU.gyroscopeAvailable()) {
+//        // read the acceleration and gyroscope data
+//        IMU.readAcceleration(aX, aY, aZ);
+//        IMU.readGyroscope(gX, gY, gZ);
+//
+//        // normalize the IMU data between 0 to 1 and store in the model's
+//        // input tensor
+//        tflInputTensor->data.f[samplesRead * 6 + 0] = (aX + 4.0) / 8.0;
+//        tflInputTensor->data.f[samplesRead * 6 + 1] = (aY + 4.0) / 8.0;
+//        tflInputTensor->data.f[samplesRead * 6 + 2] = (aZ + 4.0) / 8.0;
+//        tflInputTensor->data.f[samplesRead * 6 + 3] = (gX + 2000.0) / 4000.0;
+//        tflInputTensor->data.f[samplesRead * 6 + 4] = (gY + 2000.0) / 4000.0;
+//        tflInputTensor->data.f[samplesRead * 6 + 5] = (gZ + 2000.0) / 4000.0;
+//
+//        samplesRead++;
+//
+//        if (samplesRead == numSamples) {
+//          // Run inferencing
+//          trick = 0;
+//          TfLiteStatus invokeStatus = tflInterpreter->Invoke();
+//          if (invokeStatus != kTfLiteOk) {
+//            Serial.println("Invoke failed!");
+//            while (1);
+//            return;
+//          }
+//
+//          // Loop through the output tensor values from the model
+//          for (int i = 0; i < NUM_GESTURES; i++) {
+//
+//           predictedValue = tflOutputTensor->data.f[i];
+//
+//
+//            if( prevPred < predictedValue){
+//              prevPred = predictedValue;
+//              trick = i;
+//            }
+//          }
+//
+//          Serial.println(trick);
+//          Serial.println(prevPred);
+//          Serial.println(predictedValue);
+//          Serial.println();
+//      }
+//    }
+//  }
+//  }
