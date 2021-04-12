@@ -1,22 +1,6 @@
-/*
-  IMU Capture
-  This example uses the on-board IMU to start reading acceleration and gyroscope
-  data from on-board IMU and prints it to the Serial Monitor for one second
-  when the significant motion is detected.
-  You can also use the Serial Plotter to graph the data.
-  The circuit:
-  - Arduino Nano 33 BLE or Arduino Nano 33 BLE Sense board.
-  Created by Don Coleman, Sandeep Mistry
-  Modified by Dominic Pajak, Sandeep Mistry
-  This example code is in the public domain.
-*/
-
 #include <Arduino_LSM9DS1.h>
 #include <SD.h>                                      // used for SD Card storage
 #include <SPI.h>   
-
-
- // imports Serial Peripheral Interface Bus (SPI)library
 
 const float accelerationThreshold = 4.0; // threshold of significant in G's
 const int numSamples = 119;
@@ -30,7 +14,6 @@ File dataFile;                                       // file I am trying to writ
 /* Pin for SD Card reader */
 const int chipSelect = 10;
 String allD = "";
-
 
 void setup() {
 
@@ -59,24 +42,18 @@ void setup() {
   if (dataFile) {
     Serial.println("FILE AVAILABLE");
     dataFile.close();
-    
   }
     else {
     Serial.println("error opening datalog.txt");
     dataFile.println("ERROR");
     dataFile.close();
   }
-
-
-
-  
 }
 
 void loop() {
   float aX, aY, aZ, gX, gY, gZ;
   String allData = "";
-
-       
+ 
     digitalWrite(ledPin, LOW);
     digitalWrite(ledPin2, LOW);
     digitalWrite(ledPin3, LOW);
@@ -107,7 +84,6 @@ void loop() {
     // available
     if (IMU.accelerationAvailable() && IMU.gyroscopeAvailable()) {
 
-
       // read the acceleration and gyroscope data
       IMU.readAcceleration(aX, aY, aZ);
       IMU.readGyroscope(gX, gY, gZ);
@@ -120,15 +96,8 @@ void loop() {
   
       allData += dataString;
 
-     
-
-      
-
-       
       if (samplesRead == numSamples) {
-         
 
-        
         // add an empty line if it's the last sample
         dataFile = SD.open("accel.txt", FILE_WRITE);
 
@@ -145,8 +114,6 @@ void loop() {
           else {
     Serial.println("error opening datalog.txt");
   }
-
-        
         Serial.println();
       }
     }
