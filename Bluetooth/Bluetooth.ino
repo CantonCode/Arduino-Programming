@@ -63,10 +63,10 @@ const char* GESTURES[] = {
 #define NUM_GESTURES (sizeof(GESTURES) / sizeof(GESTURES[0]))
 
  // BLE Battery Service
-BLEService batteryService("180F");
+const BLEService batteryService("180F");
 
 // BLE Battery Level Characteristic
-BLEUnsignedCharCharacteristic batteryLevelChar("2A19",  // standard 16-bit characteristic UUID
+const BLEUnsignedCharCharacteristic batteryLevelChar("2A19",  // standard 16-bit characteristic UUID
     BLERead | BLENotify); // remote clients will be able to get notifications if this characteristic changes
 
 int oldBatteryLevel = 0;  // last battery level reading from analog input
